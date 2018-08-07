@@ -168,7 +168,7 @@ def main():
 
     BS = Black_Scholes()
     call_price1 = BS.pricing(spot_list,strike_list, dmat_list, rate_list, vol_list, typ_list, div_list)
-    print("Call value : {price:.2f}".format(price=float(call_price1[0])))
+    print("Call value : {price:.3f}".format(price=float(call_price1[0])))
     call_greeks = BS.greeks(spot_list, strike_list, dmat_list, rate_list, vol_list, typ_list, div_list)
     print("Call delta : {price:.3f}".format(price=float(call_greeks[0][0])))
     print("Call gamma : {price:.3f}".format(price=float(call_greeks[1][0])))
@@ -176,7 +176,7 @@ def main():
     print("Call vega : {price:.3f}".format(price=float(call_greeks[3][0])))
 
     put_price1 = BS.pricing(spot, strike, dmat, rate, vol, 'P', div)
-    print("Put value : {price:.2f}".format(price=float(put_price1)))
+    print("Put value : {price:.3f}".format(price=float(put_price1)))
     put_greeks = BS.greeks(spot, strike, dmat, rate, vol, 'P', div)
     print("Put delta : {price:.3f}".format(price=float(put_greeks[0])))
     print("Put gamma : {price:.3f}".format(price=float(put_greeks[1])))
@@ -189,13 +189,13 @@ def main():
 
     maturities = [pd.to_datetime('1/1/2019'), pd.to_datetime('9/1/2018'), pd.to_datetime('10/1/2018'), pd.to_datetime('12/1/2018')]
     n_days = days_to_maturity(maturities)
-    print("Days to maturity : {price:.2f}".format(price=float(n_days[0])))
+    print("Days to maturity : {price:.3f}".format(price=float(n_days[0])))
 
     MC = Monte_Carlo()
     mc_price = MC.pricing(spot, strike, dmat, rate, vol, typ, div, moment_matching=True, antithetic_variates=True)
     #mc_call_price = MC.pricing(spot, strike, dmat, rate, vol, typ, div, moment_matching=False, antithetic_variates=False)
-    print("MC call price : {price:.2f}".format(price=mc_price['call']))
-    print("MC put price : {price:.2f}".format(price=mc_price['put']))
+    print("MC call price : {price:.3f}".format(price=mc_price['call']))
+    print("MC put price : {price:.3f}".format(price=mc_price['put']))
 
 if __name__ == "__main__":
     main()
