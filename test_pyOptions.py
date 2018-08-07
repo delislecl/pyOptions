@@ -55,17 +55,17 @@ class Test_pyOptions(object):
         div = 2 / 100
 
         #Normal
-        mc_prices = MC.pricing(spot, strike, dmat, rate, vol, 'C', div)
+        mc_prices = MC.pricing(spot, strike, dmat, rate, vol, div)
         assert mc_prices['call'] == pytest.approx(24.13, 0.01)
         assert mc_prices['put'] == pytest.approx(31.04, 0.01)
 
         #Antithetic variates
-        mc_prices = MC.pricing(spot, strike, dmat, rate, vol, 'C', div, antithetic_variates=True)
+        mc_prices = MC.pricing(spot, strike, dmat, rate, vol, div, antithetic_variates=True)
         assert mc_prices['call'] == pytest.approx(24.13, 0.01)
         assert mc_prices['put'] == pytest.approx(31.04, 0.01)
 
         #Moment matching
-        mc_prices = MC.pricing(spot, strike, dmat, rate, vol, 'C', div, antithetic_variates=True, moment_matching=True)
+        mc_prices = MC.pricing(spot, strike, dmat, rate, vol, div, antithetic_variates=True, moment_matching=True)
         assert mc_prices['call'] == pytest.approx(24.13, 0.01)
         assert mc_prices['put'] == pytest.approx(31.04, 0.01)
 

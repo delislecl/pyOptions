@@ -86,7 +86,7 @@ class Monte_Carlo(object):
     def __init__(self, days_in_year=252):
         self.days_in_year = days_in_year
 
-    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, iterations=100000, time_steps=100, antithetic_variates=False, moment_matching=False):
+    def pricing(self, spot, strike, dmat, rate, vol, div=None, iterations=100000, time_steps=100, antithetic_variates=False, moment_matching=False):
 
         if div is None:
             div=0.0
@@ -116,6 +116,38 @@ class Monte_Carlo(object):
             gauss = gauss-np.mean(gauss)
             gauss = gauss / np.std(gauss)
         return gauss
+
+class Binomial_Tree(object):
+    def __init__(self, days_in_year=252):
+        self.days_in_year = days_in_year
+
+    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, time_steps=2000):
+
+        interval = (dmat/self.days_in_year)/time_steps
+
+        u = np.exp(vol * np.sqrt(interval))
+        d = 1.0 / u
+        a = np.exp((rate-div) * interval)
+        p_up = (a-d) / (u-d)
+        p_down = 1.0 - p_up
+
+        fs = np.zeros((time_steps+1, time_steps+1))
+        #fs = [[0.0 for j in range(i + 1)] for i in range(time_steps + 1)]
+
+        # Compute the leaves, f_{N, j}
+        for j in range(time_steps + 1):
+            if typ == "C":
+                fs[time_steps][j] = max(spot * u ** j * d ** (time_steps - j) - strike, 0.0)
+            else:
+                fs[time_steps][j] = max(-spot * u ** j * d ** (time_steps - j) + strike, 0.0)
+
+        # calculate backward the option prices
+        for i in range(time_steps - 1, -1, -1):
+            for j in range(i + 1):
+                fs[i][j] = np.exp(-rate * interval) * (p_up * fs[i + 1][j + 1] + p_down * fs[i + 1][j])
+
+        return fs[0][0]
+
 
 def payoff(spotMat, strike, typ):
     #Vectorized
@@ -167,35 +199,42 @@ def main():
     typ_list = pd.Series(np.array([typ for d in range(3)]))
 
     BS = Black_Scholes()
-    call_price1 = BS.pricing(spot_list,strike_list, dmat_list, rate_list, vol_list, typ_list, div_list)
-    print("Call value : {price:.3f}".format(price=float(call_price1[0])))
-    call_greeks = BS.greeks(spot_list, strike_list, dmat_list, rate_list, vol_list, typ_list, div_list)
-    print("Call delta : {price:.3f}".format(price=float(call_greeks[0][0])))
-    print("Call gamma : {price:.3f}".format(price=float(call_greeks[1][0])))
-    print("Call theta1 : {price:.3f}".format(price=float(call_greeks[2][0])))
-    print("Call vega : {price:.3f}".format(price=float(call_greeks[3][0])))
+    call_price1 = BS.pricing(spot,strike, dmat, rate, vol, typ, div)
+    print("Call value : {price:.3f}".format(price=float(call_price1)))
+    call_greeks = BS.greeks(spot, strike, dmat, rate, vol, typ, div)
+    print("Call delta : {price:.3f}".format(price=float(call_greeks[0])))
+    print("Call gamma : {price:.3f}".format(price=float(call_greeks[1])))
+    print("Call theta : {price:.3f}".format(price=float(call_greeks[2])))
+    print("Call vega : {price:.3f} \n".format(price=float(call_greeks[3])))
 
     put_price1 = BS.pricing(spot, strike, dmat, rate, vol, 'P', div)
     print("Put value : {price:.3f}".format(price=float(put_price1)))
     put_greeks = BS.greeks(spot, strike, dmat, rate, vol, 'P', div)
     print("Put delta : {price:.3f}".format(price=float(put_greeks[0])))
     print("Put gamma : {price:.3f}".format(price=float(put_greeks[1])))
-    print("Put theta1 : {price:.3f}".format(price=float(put_greeks[2])))
-    print("Put vega : {price:.3f}".format(price=float(put_greeks[3])))
+    print("Put theta : {price:.3f}".format(price=float(put_greeks[2])))
+    print("Put vega : {price:.3f} \n".format(price=float(put_greeks[3])))
 
 
     iv_call = BS.implied_vol(spot,strike, dmat, rate, 'C', 24.13, div)
     print("Call iv : {price:.3f}".format(price=float(iv_call)))
+    iv_put = BS.implied_vol(spot, strike, dmat, rate, 'P', 31.036, div)
+    print("Put iv : {price:.3f} \n".format(price=float(iv_put)))
 
     maturities = [pd.to_datetime('1/1/2019'), pd.to_datetime('9/1/2018'), pd.to_datetime('10/1/2018'), pd.to_datetime('12/1/2018')]
     n_days = days_to_maturity(maturities)
-    print("Days to maturity : {price:.3f}".format(price=float(n_days[0])))
+    print("Days to maturity : {price:.3f} \n".format(price=float(n_days[0])))
 
     MC = Monte_Carlo()
-    mc_price = MC.pricing(spot, strike, dmat, rate, vol, typ, div, moment_matching=True, antithetic_variates=True)
-    #mc_call_price = MC.pricing(spot, strike, dmat, rate, vol, typ, div, moment_matching=False, antithetic_variates=False)
+    mc_price = MC.pricing(spot, strike, dmat, rate, vol, div, moment_matching=True, antithetic_variates=True)
     print("MC call price : {price:.3f}".format(price=mc_price['call']))
-    print("MC put price : {price:.3f}".format(price=mc_price['put']))
+    print("MC put price : {price:.3f} \n".format(price=mc_price['put']))
+
+    BT = Binomial_Tree()
+    bt_call_price = BT.pricing(spot, strike, dmat, rate, vol, 'C', div)
+    print("Binomial tree call price : {price:.3f}".format(price=bt_call_price))
+    bt_put_price = BT.pricing(spot, strike, dmat, rate, vol, 'P', div)
+    print("Binomial tree put price : {price:.3f}".format(price=bt_put_price))
 
 if __name__ == "__main__":
     main()
