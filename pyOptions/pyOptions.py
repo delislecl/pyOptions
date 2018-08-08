@@ -4,6 +4,7 @@ from scipy.stats import norm
 from scipy.optimize import fsolve
 from math import pi
 import datetime as dt
+import time
 
 class Black_Scholes(object):
 
@@ -79,11 +80,10 @@ class Black_Scholes(object):
         if div is None:
             div=0.0
 
-        if isinstance(price, pd.Series) or isinstance(price, list):
+        if isinstance(price, pd.Series)  or isinstance(price, np.ndarray):
             return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=np.array([0.2 for d in price]))
         else:
-            return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price,x0=np.array(0.2))[0]
-
+            return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=np.array(0.2))[0]
 
 class Monte_Carlo(object):
 
@@ -101,7 +101,7 @@ class Monte_Carlo(object):
         S = np.zeros((time_steps+1, iterations))
         S[0] = spot
         for step in range(1, time_steps+1):
-            gauss = self.gauss_generator(iterations, antithetic_variates, moment_matching)
+            gauss = self.__gauss_generator(iterations, antithetic_variates, moment_matching)
             S[step] = S[step-1]*np.exp((rate-div-0.5*vol*vol)*interval + vol*np.sqrt(interval)*gauss)
 
         call_price = np.exp(-rate * (dmat / self.days_in_year)) * np.sum(np.maximum(S[-1] - strike, 0))/iterations
@@ -125,7 +125,7 @@ class Binomial_Tree(object):
     def __init__(self, days_in_year=252):
         self.days_in_year = days_in_year
 
-    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, time_steps=2000):
+    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, american=False, time_steps=2000):
 
         interval = (dmat/self.days_in_year)/time_steps
 
@@ -135,29 +135,39 @@ class Binomial_Tree(object):
         p_up = (a-d) / (u-d)
         p_down = 1.0 - p_up
 
-        tree = np.zeros((time_steps+1, time_steps+1))
+        vector_prices = np.zeros(time_steps+1)
 
-        # Compute Spot prices on last leaves
-        for j in range(time_steps + 1):
-            if typ == "C":
-                tree[time_steps][j] = np.maximum(spot * u ** j * d ** (time_steps - j) - strike, 0.0)
-            else:
-                tree[time_steps][j] = np.maximum(-spot * u ** j * d ** (time_steps - j) + strike, 0.0)
+        vector_spots = np.array([spot * u ** j * d ** (time_steps - j) for j  in range(time_steps+1)])
+        vector_strikes = np.array([strike for j in range(time_steps+1)])
 
-        # Calculate option prices backward
+        if typ == 'C':
+            vector_prices = np.maximum(vector_spots - vector_strikes, 0.0)
+        else:
+            vector_prices = np.maximum(vector_strikes - vector_spots, 0.0)
+
         for i in range(time_steps - 1, -1, -1):
-            for j in range(i + 1):
-                tree[i][j] = np.exp(-rate * interval) * (p_up * tree[i + 1][j + 1] + p_down * tree[i + 1][j])
+            vector_prices[:-1] = np.exp(-rate * interval) * (p_up * vector_prices[1:] + p_down * vector_prices[:-1])
 
-        return tree[0][0]
+            if american:
+                vector_spots = vector_spots * u
+                if typ == 'C':
+                    vector_prices = np.maximum(vector_prices, vector_spots - vector_strikes)
+                else:
+                    vector_prices = np.maximum(vector_prices, vector_strikes - vector_spots)
 
+        return vector_prices[0]
 
 def payoff(spotMat, strike, typ):
     #Vectorized
+
+    #Returns options payoff
+
     return np.where(typ == "C", np.maximum(spotMat - strike, 0), np.maximum(strike - spotMat, 0))
 
 def days_to_maturity(endDate, hours_in_day=6.5, hour_close=16, minute_close=0):
-    #Vectorized
+    #Vectorizes
+
+    #Return exact number of days when market is open (useful fro calculating number of days till expiration)
 
     # Parameters
     seconds_in_hour = 3600
@@ -183,6 +193,46 @@ def days_to_maturity(endDate, hours_in_day=6.5, hour_close=16, minute_close=0):
 
     return NbDays + NbSeconds
 
+def random_walk_generator(mu=0.05, sigma=0.2, S0=100, T=1):
+    #Generate a random walk to perform analysis
+
+    deltaT = 1 / 252
+    N = round(T/deltaT)
+    step = np.exp((mu - 0.5 * sigma**2) * deltaT + sigma * np.sqrt(deltaT) * np.random.randn(N))
+    S = S0 * step.cumprod()
+    return pd.Series(S)
+
+def statistics_backtest(daily_pnls):
+    #Generate useful backtest statistics on pnl series
+
+    daily_pnls.dropna(inplace=True)
+    total_pnl = np.sum(daily_pnls)
+    sum_cummuled = daily_pnls.cumsum()
+    max_drawdown = np.min(sum_cummuled - np.maximum.accumulate(sum_cummuled))
+    max_drawdown_end = np.argmin(sum_cummuled - np.maximum.accumulate(sum_cummuled))
+    max_drawdown_begin = np.argmax(sum_cummuled[:max_drawdown_end])
+    max_pnl = np.max(daily_pnls)
+    avg_pnl = np.mean(daily_pnls)
+    mdn_pnl = np.median(daily_pnls)
+    std_pnl = np.std(daily_pnls)
+    min_pnl = np.min(daily_pnls)
+    proba_up = len(daily_pnls[daily_pnls >= 0]) / len(daily_pnls)
+    sharpe = avg_pnl * np.sqrt(252) / std_pnl
+    sortino = avg_pnl * np.sqrt(252) / np.std(daily_pnls[daily_pnls < 0])
+
+    return {'total_pnl': total_pnl,
+            'max_drawdown': max_drawdown,
+            'max_drawdown_end': max_drawdown_end,
+            'max_drawdown_begin': max_drawdown_begin,
+            'max_pnl': max_pnl,
+            'avg_pnl': avg_pnl,
+            'mdn_pnl': mdn_pnl,
+            'std_pnl': std_pnl,
+            'min_pnl': min_pnl,
+            'proba_up': proba_up,
+            'sharpe': sharpe,
+            'sortino': sortino}
+
 def main():
 
     spot = 200
@@ -201,7 +251,7 @@ def main():
     div_list = pd.Series(np.array([div for d in range(3)]))
     typ_list = pd.Series(np.array([typ for d in range(3)]))
 
-    price_list = pd.Series(np.array([24.13, 22, 21]))
+    price_list = pd.Series(np.array([24.13 for d in range(3)]))
 
     BS = Black_Scholes()
     call_price1 = BS.pricing(spot,strike, dmat, rate, vol, typ, div)
@@ -236,10 +286,14 @@ def main():
     print("MC put price : {price:.3f} \n".format(price=mc_price['put']))
 
     BT = Binomial_Tree()
-    bt_call_price = BT.pricing(spot, strike, dmat, rate, vol, 'C', div)
-    print("Binomial tree call price : {price:.3f}".format(price=bt_call_price))
+    t0 = time.clock()
+    bt_call_price = BT.pricing(spot, strike, dmat, rate, vol, 'C', div, american=True)
+    t1 = time.clock()
+    print("Binomial tree call price : {price:.3f} in {timing:.2f} ms.".format(price=bt_call_price, timing=(t1-t0)*1000))
+
     bt_put_price = BT.pricing(spot, strike, dmat, rate, vol, 'P', div)
     print("Binomial tree put price : {price:.3f}".format(price=bt_put_price))
+
 
 if __name__ == "__main__":
     main()
