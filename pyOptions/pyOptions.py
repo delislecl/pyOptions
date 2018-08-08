@@ -74,12 +74,16 @@ class Black_Scholes(object):
             return [delta, gamma, theta, vega]
 
     def implied_vol(self, spot, strike, dmat, rate, typ, price, div=None):
+        #Vectorized
+
         if div is None:
             div=0.0
-        return  fsolve(func=self.__IV_error , x0=np.array(0.2), args=(spot, strike, dmat, rate, price, typ, div))[0]
 
-    def __IV_error(self, x, spot, strike, dmat, rate, price, typ, div):
-        return self.pricing(spot, strike, dmat, rate, x, typ, div) - price
+        if isinstance(price, pd.Series) or isinstance(price, list):
+            return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=np.array([0.2 for d in price]))
+        else:
+            return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price,x0=np.array(0.2))[0]
+
 
 class Monte_Carlo(object):
 
@@ -105,7 +109,7 @@ class Monte_Carlo(object):
         return {'call': call_price, 'put' : put_price}
 
     @staticmethod
-    def gauss_generator(d, antithetic_variates, moment_matching):
+    def __gauss_generator(d, antithetic_variates, moment_matching):
         if antithetic_variates:
             gauss = np.random.randn(int(d/2))
             gauss = np.concatenate((gauss, -gauss))
@@ -131,22 +135,21 @@ class Binomial_Tree(object):
         p_up = (a-d) / (u-d)
         p_down = 1.0 - p_up
 
-        fs = np.zeros((time_steps+1, time_steps+1))
-        #fs = [[0.0 for j in range(i + 1)] for i in range(time_steps + 1)]
+        tree = np.zeros((time_steps+1, time_steps+1))
 
-        # Compute the leaves, f_{N, j}
+        # Compute Spot prices on last leaves
         for j in range(time_steps + 1):
             if typ == "C":
-                fs[time_steps][j] = max(spot * u ** j * d ** (time_steps - j) - strike, 0.0)
+                tree[time_steps][j] = np.maximum(spot * u ** j * d ** (time_steps - j) - strike, 0.0)
             else:
-                fs[time_steps][j] = max(-spot * u ** j * d ** (time_steps - j) + strike, 0.0)
+                tree[time_steps][j] = np.maximum(-spot * u ** j * d ** (time_steps - j) + strike, 0.0)
 
-        # calculate backward the option prices
+        # Calculate option prices backward
         for i in range(time_steps - 1, -1, -1):
             for j in range(i + 1):
-                fs[i][j] = np.exp(-rate * interval) * (p_up * fs[i + 1][j + 1] + p_down * fs[i + 1][j])
+                tree[i][j] = np.exp(-rate * interval) * (p_up * tree[i + 1][j + 1] + p_down * tree[i + 1][j])
 
-        return fs[0][0]
+        return tree[0][0]
 
 
 def payoff(spotMat, strike, typ):
@@ -198,6 +201,8 @@ def main():
     div_list = pd.Series(np.array([div for d in range(3)]))
     typ_list = pd.Series(np.array([typ for d in range(3)]))
 
+    price_list = pd.Series(np.array([24.13, 22, 21]))
+
     BS = Black_Scholes()
     call_price1 = BS.pricing(spot,strike, dmat, rate, vol, typ, div)
     print("Call value : {price:.3f}".format(price=float(call_price1)))
@@ -215,7 +220,7 @@ def main():
     print("Put theta : {price:.3f}".format(price=float(put_greeks[2])))
     print("Put vega : {price:.3f} \n".format(price=float(put_greeks[3])))
 
-
+    iv_vect = BS.implied_vol(spot_list, strike_list, dmat_list, rate_list, typ_list, price_list, div_list)
     iv_call = BS.implied_vol(spot,strike, dmat, rate, 'C', 24.13, div)
     print("Call iv : {price:.3f}".format(price=float(iv_call)))
     iv_put = BS.implied_vol(spot, strike, dmat, rate, 'P', 31.036, div)
