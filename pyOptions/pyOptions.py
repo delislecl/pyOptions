@@ -50,7 +50,7 @@ class Black_Scholes(object):
         nd2 = norm.cdf(d2)
         nd1n = norm.cdf(-d1)
         nd2n = norm.cdf(-d2)
-        div_term = np.exp(-rate * (dmat / self.days_in_year))
+        div_term = np.exp(-div * (dmat / self.days_in_year))
         n_dash_d1 = div_term * np.exp(-d1 * d1 / 2) / (np.sqrt(2 * pi))
 
 
@@ -143,15 +143,18 @@ class Binomial_Tree(object):
     def __init__(self, days_in_year=252):
         self.days_in_year = days_in_year
 
-    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, american=False, time_steps=2000):
+    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, american=None, time_steps=2000):
         #Vectorized
 
         if div is None:
             div = 0.0
 
+        if american is None:
+            american = False
+
         if isinstance(spot, pd.Series) or isinstance(spot, np.ndarray):
-            df = pd.DataFrame({'spot': spot, 'strike': strike, 'dmat': dmat, 'rate': rate, 'vol': vol, 'typ': typ,  'div': div})
-            return df.apply(lambda x: self.__calculate_price(x['spot'], x['strike'], x['dmat'], x['rate'], x['vol'], x['typ'], x['div'], american, time_steps), axis=1)
+            df = pd.DataFrame({'spot': spot, 'strike': strike, 'dmat': dmat, 'rate': rate, 'vol': vol, 'typ': typ,  'div': div, 'american': american})
+            return df.apply(lambda x: self.__calculate_price(x['spot'], x['strike'], x['dmat'], x['rate'], x['vol'], x['typ'], x['div'], x['american'], time_steps), axis=1)
         else:
             return self.__calculate_price(spot, strike, dmat, rate, vol, typ, div, american, time_steps)
 
@@ -182,14 +185,13 @@ class Binomial_Tree(object):
                 if typ == 'C':
                     vector_prices = np.maximum(vector_prices, vector_spots - vector_strikes)
                 else:
-                    np.maximum(vector_prices, vector_strikes - vector_spots)
+                    vector_prices = np.maximum(vector_prices, vector_strikes - vector_spots)
 
         return vector_prices[0]
 
-
 class Tester(object):
 
-    def __init__(self, VECTOR_SIZES=100, spot=200, strike=220, dmat=2*252, vol = 0.25, rate=0.05, iv=0.02, typ='C', price=24.13, div=0):
+    def __init__(self, VECTOR_SIZES=100, spot=200.0, strike=220.0, dmat=2*252, vol = 0.25, rate=0.05, typ='C', price=24.13, div=0.0, american=False):
         self.VECTOR_SIZES = VECTOR_SIZES
         self.spot_series = pd.Series([spot for d in range(VECTOR_SIZES)])
         self.strike_series = pd.Series([strike for d in range(VECTOR_SIZES)])
@@ -199,6 +201,7 @@ class Tester(object):
         self.div_series = pd.Series([div for d in range(VECTOR_SIZES)])
         self.typ_series = pd.Series([typ for d in range(VECTOR_SIZES)])
         self.price_series = pd.Series([price for d in range(VECTOR_SIZES)])
+        self.american_series = pd.Series([american for d in range(VECTOR_SIZES)])
 
         self.spot_array = np.array([spot for d in range(VECTOR_SIZES)])
         self.strike_array = np.array([strike for d in range(VECTOR_SIZES)])
@@ -208,6 +211,7 @@ class Tester(object):
         self.div_array = np.array([div for d in range(VECTOR_SIZES)])
         self.typ_array = np.array([typ for d in range(VECTOR_SIZES)])
         self.price_array = np.array([price for d in range(VECTOR_SIZES)])
+        self.american_array = np.array([american for d in range(VECTOR_SIZES)])
 
     def Black_Scholes(self):
         BS = Black_Scholes()
@@ -328,28 +332,27 @@ class Tester(object):
 
         BT = Binomial_Tree()
         t0 = time.clock()
-        bt_call_price = BT.pricing(self.spot_series, self.strike_series, self.dmat_series, self.rate_series, self.vol_series, self.typ_series, self.div_series, american=True, time_steps=time_steps)
+        bt_call_price = BT.pricing(self.spot_series, self.strike_series, self.dmat_series, self.rate_series, self.vol_series, self.typ_series, self.div_series, american=self.american_series, time_steps=time_steps)
         t1 = time.clock()
         print("Binomial tree price vectorized series : {price:.3f} in {timing:.2f} ms.".format(price=bt_call_price[0],timing=(t1 - t0) * 1000))
 
         BT = Binomial_Tree()
         t0 = time.clock()
-        bt_call_price = BT.pricing(self.spot_series, self.strike_series, self.dmat_series, self.rate_series,self.vol_series, self.typ_series, self.div_series, american=True, time_steps=time_steps)
+        bt_call_price = BT.pricing(self.spot_series, self.strike_series, self.dmat_series, self.rate_series,self.vol_series, self.typ_series, self.div_series, american=self.american_series, time_steps=time_steps)
         t1 = time.clock()
         print("Binomial tree price vectorized array : {price:.3f} in {timing:.2f} ms.".format(price=bt_call_price[0], timing=(t1 - t0) * 1000))
 
         t0 = time.clock()
         for i in range(self.VECTOR_SIZES):
-            bt_call_price = BT.pricing(self.spot_series[i], self.strike_series[i], self.dmat_series[i], self.rate_series[i], self.vol_series[i], self.typ_series[i], self.div_series[i], american=True, time_steps=time_steps)
+            bt_call_price = BT.pricing(self.spot_series[i], self.strike_series[i], self.dmat_series[i], self.rate_series[i], self.vol_series[i], self.typ_series[i], self.div_series[i], american=self.american_series[i], time_steps=time_steps)
         t1 = time.clock()
         print("Binomial tree price looping series : {price:.3f} in {timing:.2f} ms.".format(price=bt_call_price, timing=(t1 - t0) * 1000))
 
         t0 = time.clock()
         for i in np.ndindex(self.VECTOR_SIZES):
-            bt_call_price = BT.pricing(self.spot_array[i], self.strike_array[i], self.dmat_array[i], self.rate_array[i], self.vol_array[i], self.typ_array[i], self.div_array[i], american=True, time_steps=time_steps)
+            bt_call_price = BT.pricing(self.spot_array[i], self.strike_array[i], self.dmat_array[i], self.rate_array[i], self.vol_array[i], self.typ_array[i], self.div_array[i], american=self.american_array[i], time_steps=time_steps)
         t1 = time.clock()
         print("Binomial tree price looping array : {price:.3f} in {timing:.2f} ms. \n".format(price=bt_call_price, timing=(t1 - t0) * 1000))
-
 
 def payoff(spotMat, strike, typ):
     #Vectorized
@@ -438,10 +441,10 @@ def statistics_backtest(daily_pnls):
 
 def main():
 
-    performance_tester = Tester(VECTOR_SIZES=200)
-    #performance_tester.Black_Scholes()
+    performance_tester = Tester(div=0.00, typ='P', american=False)
+    performance_tester.Black_Scholes()
     #performance_tester.Monte_Carlo()
-    performance_tester.Binomial_Tree(time_steps=5000)
+    performance_tester.Binomial_Tree()
 
 
 if __name__ == "__main__":
