@@ -1,5 +1,5 @@
 import pytest
-from pyOptions.pyOptions import Black_Scholes, Monte_Carlo, days_to_maturity
+from pyOptions import Black_Scholes, Monte_Carlo, days_to_maturity
 
 
 class Test_pyOptions(object):
