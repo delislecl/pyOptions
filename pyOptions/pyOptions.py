@@ -89,18 +89,6 @@ class Black_Scholes(object):
         else:
             return self.__calculate_iv(spot, strike, dmat, rate, typ, price, div)
 
-    def implied_vol_old(self, spot, strike, dmat, rate, typ, price, div=None):
-        # Vectorized
-
-        if div is None:
-            div = 0.0
-
-        if isinstance(price, pd.Series) or isinstance(price, np.ndarray):
-            return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=np.array([0.2 for d in spot]))
-        else:
-            return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=np.array(0.2))[0]
-
-
     def __calculate_iv(self, spot, strike, dmat, rate, typ, price, div):
             return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=np.array(0.2))[0]
 
@@ -116,12 +104,11 @@ class Monte_Carlo(object):
 
         if isinstance(spot, pd.Series) or isinstance(spot, np.ndarray):
             df = pd.DataFrame({'spot': spot, 'strike' : strike, 'dmat': dmat, 'rate': rate, 'vol': vol, 'div': div})
-            return df.apply(lambda x: self.__pricer(x['spot'], x['strike'], x['dmat'], x['rate'], x['vol'], x['div'], iterations, time_steps, antithetic_variates, moment_matching), axis=1)
+            return df.apply(lambda x: self.__calculate_price(x['spot'], x['strike'], x['dmat'], x['rate'], x['vol'], x['div'], iterations, time_steps, antithetic_variates, moment_matching), axis=1)
         else:
-            return self.__pricer(spot, strike, dmat, rate, vol, div, iterations, time_steps, antithetic_variates, moment_matching)
+            return self.__calculate_price(spot, strike, dmat, rate, vol, div, iterations, time_steps, antithetic_variates, moment_matching)
 
-
-    def __pricer(self, spot, strike, dmat, rate, vol, div, iterations, time_steps, antithetic_variates, moment_matching):
+    def __calculate_price(self, spot, strike, dmat, rate, vol, div, iterations, time_steps, antithetic_variates, moment_matching):
 
         # time interval
         interval = (dmat / self.days_in_year) / time_steps
@@ -152,57 +139,6 @@ class Monte_Carlo(object):
             gauss = gauss / np.std(gauss)
         return gauss
 
-    def pricing_old(self, spot, strike, dmat, rate, vol, div=None, iterations=100000, time_steps=100, antithetic_variates=False, moment_matching=False):
-
-        if div is None:
-            div=0.0
-
-        dim = 1
-        if isinstance(spot, pd.Series) or isinstance(spot, np.ndarray):
-            dim = len(spot)
-
-        spot = np.array(spot)
-        strike = np.array(strike)
-        dmat = np.array(dmat)
-        rate = np.array(rate)
-        vol = np.array(vol)
-        div = np.array(div)
-
-        #time interval
-        interval = (dmat / self.days_in_year) / time_steps
-
-        S = np.zeros((time_steps+1, iterations, dim))
-        S[0] = spot
-        for step in range(1, time_steps+1):
-            gauss = self.__gauss_generator_old(iterations, dim, antithetic_variates, moment_matching)
-            prev_step = S[step-1]
-            brownian = gauss * np.array(vol * np.sqrt(interval))
-            drift = np.array((rate-div-0.5* vol ** 2)*interval)
-            actu = drift + brownian
-            S[step] = prev_step * np.exp(actu)
-
-        actualization = np.array(np.exp(-rate * (dmat / self.days_in_year)))
-        call_price = actualization * np.sum(np.maximum(S[-1] - strike, 0), axis=0) / iterations
-        put_price = actualization * np.sum(np.maximum(strike - S[-1], 0), axis=0)/iterations
-
-        if dim == 1:
-            return [float(call_price), float(put_price)]
-        else:
-            return [call_price, put_price]
-
-    @staticmethod
-    def __gauss_generator_old(d1, d2, antithetic_variates, moment_matching):
-        if antithetic_variates:
-            gauss = np.random.randn(int(d1/2), d2)
-            gauss = np.concatenate((gauss, -gauss))
-        else:
-            gauss = np.random.randn(d1, d2)
-
-        if moment_matching:
-            gauss = gauss-np.mean(gauss)
-            gauss = gauss / np.std(gauss)
-        return gauss
-
 class Binomial_Tree(object):
     def __init__(self, days_in_year=252):
         self.days_in_year = days_in_year
@@ -215,11 +151,11 @@ class Binomial_Tree(object):
 
         if isinstance(spot, pd.Series) or isinstance(spot, np.ndarray):
             df = pd.DataFrame({'spot': spot, 'strike': strike, 'dmat': dmat, 'rate': rate, 'vol': vol, 'typ': typ,  'div': div})
-            return df.apply(lambda x: self.__pricer(x['spot'], x['strike'], x['dmat'], x['rate'], x['vol'], x['typ'], x['div'], american, time_steps), axis=1)
+            return df.apply(lambda x: self.__calculate_price(x['spot'], x['strike'], x['dmat'], x['rate'], x['vol'], x['typ'], x['div'], american, time_steps), axis=1)
         else:
-            return self.__pricer(spot, strike, dmat, rate, vol, typ, div, american, time_steps)
+            return self.__calculate_price(spot, strike, dmat, rate, vol, typ, div, american, time_steps)
 
-    def __pricer(self, spot, strike, dmat, rate, vol, typ, div, american, time_steps):
+    def __calculate_price(self, spot, strike, dmat, rate, vol, typ, div, american, time_steps):
         interval = (dmat / self.days_in_year) / time_steps
 
         u = np.exp(vol * np.sqrt(interval))
@@ -250,46 +186,6 @@ class Binomial_Tree(object):
 
         return vector_prices[0]
 
-    def pricing_old(self, spot, strike, dmat, rate, vol, typ, div=None, american=False, time_steps=2000):
-        #Vectorized
-
-        if div is None:
-            div = 0
-
-        spot = np.array(spot)
-        strike = np.array(strike)
-        dmat = np.array(dmat)
-        rate = np.array(rate)
-        vol = np.array(vol)
-        typ = np.array(typ)
-        div = np.array(div)
-
-        interval = (dmat/self.days_in_year)/time_steps
-
-        u = np.array(np.exp(vol * np.sqrt(interval)))
-        d = 1.0 / u
-        a = np.exp((rate-div) * interval)
-        p_up = np.array((a-d) / (u-d))
-        p_down = 1.0 - p_up
-
-        vector_prices = np.zeros(time_steps+1)
-
-        vector_spots = np.array([spot * u ** j * d ** (time_steps - j) for j  in range(time_steps+1)])
-        vector_strikes = np.array([strike for j in range(time_steps+1)])
-
-        vector_prices = np.where(typ == 'C', np.maximum(vector_spots - vector_strikes, 0.0), np.maximum(vector_strikes - vector_spots, 0.0))
-
-        for i in range(time_steps - 1, -1, -1):
-            up = vector_prices[1:]
-            down = vector_prices[:-1]
-            exp_factor = np.exp( -interval * rate)
-            vector_prices[:-1] = (up * p_up  + down * p_down) * exp_factor
-
-            if american:
-                vector_spots = vector_spots * u
-                vector_prices = np.where(typ=='C', np.maximum(vector_prices, vector_spots - vector_strikes), np.maximum(vector_prices, vector_strikes - vector_spots))
-
-        return vector_prices[0]
 
 class Tester(object):
 
@@ -401,17 +297,7 @@ class Tester(object):
         for i in np.ndindex(self.VECTOR_SIZES):
             iv_call = BS.implied_vol(self.spot_array[i], self.strike_array[i], self.dmat_array[i], self.rate_array[i], self.typ_array[i], self.price_array[i], self.div_array[i])
         t1 = time.clock()
-        print("iv looping array : {price:.3f} in {timing:.2f} ms.".format(price=float(iv_call), timing=(t1 - t0) * 1000))
-
-        t0 = time.clock()
-        iv_call = BS.implied_vol(self.spot_series, self.strike_series, self.dmat_series, self.rate_series, self.typ_series, self.price_series, self.div_series)
-        t1 = time.clock()
-        print("iv vectorized OLD series : {price:.3f} in {timing:.2f} ms.".format(price=float(iv_call[0]),timing=(t1 - t0) * 1000))
-
-        t0 = time.clock()
-        iv_call = BS.implied_vol(self.spot_array, self.strike_array, self.dmat_array, self.rate_array, self.typ_array, self.price_array, self.div_array)
-        t1 = time.clock()
-        print("iv vectorized OLD array : {price:.3f} in {timing:.2f} ms. \n".format(price=float(iv_call[0]),timing=(t1 - t0) * 1000))
+        print("iv looping array : {price:.3f} in {timing:.2f} ms. \n".format(price=float(iv_call), timing=(t1 - t0) * 1000))
 
     def Monte_Carlo(self):
         MC = Monte_Carlo()
@@ -436,17 +322,7 @@ class Tester(object):
         for i in np.ndindex(self.VECTOR_SIZES):
             mc_price = MC.pricing(self.spot_array[i], self.strike_array[i], self.dmat_array[i], self.rate_array[i], self.vol_array[i], self.div_array[i], antithetic_variates=True,moment_matching=True)
         t1 = time.clock()
-        print("MC price looping array : {price:.3f} in {timing:.2f} ms.".format(price=mc_price[0], timing=(t1 - t0) * 1000))
-
-        t0 = time.clock()
-        mc_price = MC.pricing_old(self.spot_series, self.strike_series, self.dmat_series, self.rate_series, self.vol_series,self.div_series, antithetic_variates=True, moment_matching=True)
-        t1 = time.clock()
-        print("MC price vectorized OLD series : {price:.3f} in {timing:.2f} ms.".format(price=mc_price[0][0],timing=(t1 - t0) * 1000))
-
-        t0 = time.clock()
-        mc_price = MC.pricing_old(self.spot_array, self.strike_array, self.dmat_array, self.rate_array,self.vol_array, self.div_array, antithetic_variates=True, moment_matching=True)
-        t1 = time.clock()
-        print("MC price vectorized OLD series : {price:.3f} in {timing:.2f} ms. \n".format(price=mc_price[0][0],timing=(t1 - t0) * 1000))
+        print("MC price looping array : {price:.3f} in {timing:.2f} ms. \n".format(price=mc_price[0], timing=(t1 - t0) * 1000))
 
     def Binomial_Tree(self, time_steps=2000):
 
@@ -472,17 +348,8 @@ class Tester(object):
         for i in np.ndindex(self.VECTOR_SIZES):
             bt_call_price = BT.pricing(self.spot_array[i], self.strike_array[i], self.dmat_array[i], self.rate_array[i], self.vol_array[i], self.typ_array[i], self.div_array[i], american=True, time_steps=time_steps)
         t1 = time.clock()
-        print("Binomial tree price looping array : {price:.3f} in {timing:.2f} ms.".format(price=bt_call_price, timing=(t1 - t0) * 1000))
+        print("Binomial tree price looping array : {price:.3f} in {timing:.2f} ms. \n".format(price=bt_call_price, timing=(t1 - t0) * 1000))
 
-        t0 = time.clock()
-        bt_call_price = BT.pricing_old(self.spot_series, self.strike_series, self.dmat_series, self.rate_series, self.vol_series, self.typ_series, self.div_series, american=True, time_steps=time_steps)
-        t1 = time.clock()
-        print("Binomial tree price vectorized OLD series : {price:.3f} in {timing:.2f} ms.".format(price=bt_call_price[0], timing=(t1 - t0) * 1000))
-
-        t0 = time.clock()
-        bt_call_price = BT.pricing_old(self.spot_array, self.strike_array, self.dmat_array, self.rate_array,self.vol_array, self.typ_array, self.div_array, american=True, time_steps=time_steps)
-        t1 = time.clock()
-        print("Binomial tree price vectorized OLD array : {price:.3f} in {timing:.2f} ms. \n".format(price=bt_call_price[0],timing=(t1 - t0) * 1000))
 
 def payoff(spotMat, strike, typ):
     #Vectorized
