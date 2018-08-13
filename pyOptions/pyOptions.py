@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy.stats import norm
-from scipy.optimize import fsolve
+from scipy.optimize import newton
 from math import pi
 import datetime as dt
 import time
@@ -53,35 +53,37 @@ class Black_Scholes(object):
         div_term = np.exp(-div * (dmat / self.days_in_year))
         n_dash_d1 = div_term * np.exp(-d1 * d1 / 2) / (np.sqrt(2 * pi))
 
-
-        if greek == 'delta':
+        delta, gamma, theta, vega = None, None, None, None
+        if greek == 'delta' or greek =='all':
             # for a 1 move of underlying
-            return np.where(typ == "C", nd1 * div_term, div_term * (nd1 - 1))
-        elif greek == 'gamma':
-            # for a 1 move amplitude of underlying
-            return n_dash_d1 / (spot * vol * np.sqrt(dmat / self.days_in_year))
-        elif greek == 'theta':
-            # for 1 business day
-            return np.where(typ == "C",
-                            (1 / self.days_in_year) * (-(spot * n_dash_d1 * vol) / (2 * np.sqrt(dmat / self.days_in_year)) - (rate * strike * np.exp(-rate * (dmat / self.days_in_year)) * nd2) + div * spot * div_term * nd1),
-                            (1 / self.days_in_year) * (-(spot * n_dash_d1 * vol) / (2 * np.sqrt(dmat / self.days_in_year)) + (rate * strike * np.exp(-rate * (dmat / self.days_in_year)) * nd2n) - div * spot * div_term * nd1n))
-        elif greek == 'vega':
-            # for a 1% move of iv
-            return spot * np.sqrt(dmat / self.days_in_year) * n_dash_d1 / 100
-        else:
             delta = np.where(typ == "C", nd1 * div_term, div_term * (nd1 - 1))
+            if greek == 'delta':
+                return delta
+
+        if greek == 'gamma' or greek =='all':
+            # for a 1 move amplitude of underlying
             gamma = n_dash_d1 / (spot * vol * np.sqrt(dmat / self.days_in_year))
+            if greek =='gamma':
+                return gamma
+
+        if greek == 'theta' or greek == 'all':
+            # for 1 business day
             theta = np.where(typ == "C",
                             (1 / self.days_in_year) * (-(spot * n_dash_d1 * vol) / (2 * np.sqrt(dmat / self.days_in_year)) - (rate * strike * np.exp(-rate * (dmat / self.days_in_year)) * nd2) + div * spot * div_term * nd1),
                             (1 / self.days_in_year) * (-(spot * n_dash_d1 * vol) / (2 * np.sqrt(dmat / self.days_in_year)) + (rate * strike * np.exp(-rate * (dmat / self.days_in_year)) * nd2n) - div * spot * div_term * nd1n))
+            if greek == 'theta':
+                return theta
+
+        if greek == 'vega' or greek == 'all':
+            # for a 1% move of iv
             vega = spot * np.sqrt(dmat / self.days_in_year) * n_dash_d1 / 100
-            return [delta, gamma, theta, vega]
+            if greek == 'vega':
+                return vega
+
+        return [delta, gamma, theta, vega]
 
     def implied_vol(self, spot, strike, dmat, rate, typ, price, div=None):
         #Vectorized
-
-        if div is None:
-            div=0.0
 
         if isinstance(price, pd.Series) or isinstance(price, np.ndarray):
             df = pd.DataFrame({'spot': spot, 'strike': strike, 'dmat': dmat, 'rate': rate, 'typ': typ, 'price': price, 'div': div})
@@ -90,7 +92,8 @@ class Black_Scholes(object):
             return self.__calculate_iv(spot, strike, dmat, rate, typ, price, div)
 
     def __calculate_iv(self, spot, strike, dmat, rate, typ, price, div):
-            return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=np.array(0.2))[0]
+            #return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=np.array(0.9),xtol=0.01 / 100)[0]
+            return newton(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=0.2, tol=0.01/100)
 
 class Monte_Carlo(object):
 
@@ -189,6 +192,65 @@ class Binomial_Tree(object):
 
         return vector_prices[0]
 
+    def greeks(self, spot, strike, dmat, rate, vol, typ, div=None, greek = 'all', american=None, time_steps=2000):
+
+        gamma_jump = 0.05 * spot
+        theta_jump = 0.001 * self.days_in_year
+        vega_jump = 0.001
+        delta, gamma, theta, vega = None, None, None, None
+
+        # Delta
+        if greek == 'delta' or greek == 'all':
+            delta = self.__delta(spot, strike, dmat, rate, vol, typ, div, american, time_steps)
+            if greek == 'delta':
+                return delta
+
+        #Gamma
+        if greek == 'gamma' or greek == 'all':
+            delta_up = self.__delta(spot + gamma_jump, strike, dmat, rate, vol, typ, div, american, time_steps)
+            delta_down = self.__delta(spot - gamma_jump, strike, dmat, rate, vol, typ, div, american, time_steps)
+            gamma = (delta_up - delta_down) / (2 * gamma_jump)
+            if greek == 'gamma':
+                return gamma
+
+        #Theta (1 day move)
+        if greek == 'theta' or greek == 'all':
+            price_up = self.pricing(spot, strike, dmat - theta_jump, rate, vol, typ, div=div, american=american,time_steps=time_steps)
+            price_down = self.pricing(spot, strike, dmat + theta_jump, rate, vol, typ, div=div, american=american,time_steps=time_steps)
+            theta = (price_up - price_down) / (2 * theta_jump)
+            if greek == 'theta':
+                return theta
+
+        #Vega (1 % move)
+        if greek == 'vega' or greek == 'all':
+            price_up = self.pricing(spot, strike, dmat, rate, vol + vega_jump, typ, div=div, american=american,time_steps=time_steps)
+            price_down = self.pricing(spot, strike, dmat, rate, vol - vega_jump, typ, div=div, american=american,time_steps=time_steps)
+            vega = (1/100) * (price_up - price_down) / (2 * vega_jump)
+            if greek == 'vega':
+                return vega
+
+        return [delta, gamma, theta, vega]
+
+    def implied_vol(self, spot, strike, dmat, rate, typ, price, div=None, american=None, time_steps=2000):
+
+        if isinstance(price, pd.Series) or isinstance(price, np.ndarray):
+            df = pd.DataFrame({'spot': spot, 'strike': strike, 'dmat': dmat, 'rate': rate, 'typ': typ, 'price': price, 'div': div, 'american': american})
+            return df.apply(lambda x: self.__calculate_iv(x['spot'], x['strike'], x['dmat'], x['rate'], x['typ'], x['price'], x['div'], x['american'], time_steps), axis=1)
+        else:
+            return self.__calculate_iv(spot, strike, dmat, rate, typ, price, div, american, time_steps)
+
+    def __calculate_iv(self, spot, strike, dmat, rate, typ, price, div, american, time_steps):
+        #return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div, american=american, time_steps=time_steps) - price, x0=np.array(0.2),xtol=0.01 / 100)[0]
+        return newton(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=0.2,tol=0.01 / 100)
+
+    def __delta(self, spot, strike, dmat, rate, vol, typ, div, american, time_steps):
+        delta_jump = (0.01 / 1000) * spot
+        # Delta
+        price_up = self.pricing(spot + delta_jump, strike, dmat, rate, vol, typ, div=div, american=american,time_steps=time_steps)
+        price_down = self.pricing(spot - delta_jump, strike, dmat, rate, vol, typ, div=div, american=american,time_steps=time_steps)
+        return (price_up - price_down) / (2 * delta_jump)
+
+
 class Tester(object):
 
     def __init__(self, VECTOR_SIZES=100, spot=200.0, strike=220.0, dmat=2*252, vol = 0.25, rate=0.05, typ='C', price=24.13, div=0.0, american=False):
@@ -212,6 +274,40 @@ class Tester(object):
         self.typ_array = np.array([typ for d in range(VECTOR_SIZES)])
         self.price_array = np.array([price for d in range(VECTOR_SIZES)])
         self.american_array = np.array([american for d in range(VECTOR_SIZES)])
+
+        self.call_eu1 = {'spot': 200, 'strike': 220, 'dmat': 2 * 252, 'vol': 0.25, 'rate': 0.05, 'typ': 'C','price': 28.47, 'div': 0.0, 'american': False}
+        self.put_eu1 = {'spot': 200,'strike': 220,'dmat': 2 * 252,'vol': 0.25,'rate': 0.05,'typ': 'P','price': 27.53,'div': 0.0,'american': False}
+        self.call_eu2 = {'spot': 200, 'strike': 220, 'dmat': 2 * 252, 'vol': 0.25, 'rate': 0.05, 'typ': 'C','price': 22.15, 'div': 0.03, 'american': False}
+        self.put_eu2 = {'spot': 200, 'strike': 220, 'dmat': 2 * 252, 'vol': 0.25, 'rate': 0.05, 'typ': 'P','price': 32.86, 'div': 0.03, 'american': False}
+        self.call_us1 = {'spot': 200, 'strike': 220, 'dmat': 2 * 252, 'vol': 0.25, 'rate': 0.05, 'typ': 'C','price': 28.47, 'div': 0.0, 'american': True}
+        self.put_us1 = {'spot': 200, 'strike': 220, 'dmat': 2 * 252, 'vol': 0.25, 'rate': 0.05, 'typ': 'P','price': 31.57, 'div': 0.0, 'american': True}
+        self.call_us2 = {'spot': 200, 'strike': 220, 'dmat': 2 * 252, 'vol': 0.25, 'rate': 0.05, 'typ': 'C','price': 22.17, 'div': 0.03, 'american': True}
+        self.put_us2 = {'spot': 200, 'strike': 220, 'dmat': 2 * 252, 'vol': 0.25, 'rate': 0.05, 'typ': 'P','price': 35.09, 'div': 0.03, 'american': True}
+
+    def correct_values(self):
+        BT = Binomial_Tree()
+        BS = Black_Scholes()
+
+        #EU
+        check_call_eu1 = BS.pricing(self.call_eu1['spot'],self.call_eu1['strike'], self.call_eu1['dmat'], self.call_eu1['rate'], self.call_eu1['vol'], self.call_eu1['typ'], div=self.call_eu1['div'])
+        check_put_eu1 = BS.pricing(self.put_eu1['spot'], self.put_eu1['strike'], self.put_eu1['dmat'],self.put_eu1['rate'], self.put_eu1['vol'], self.put_eu1['typ'],div=self.put_eu1['div'])
+        check_call_eu2 = BS.pricing(self.call_eu2['spot'], self.call_eu2['strike'], self.call_eu2['dmat'],self.call_eu2['rate'], self.call_eu2['vol'], self.call_eu2['typ'],div=self.call_eu2['div'])
+        check_put_eu2 = BS.pricing(self.put_eu2['spot'], self.put_eu2['strike'], self.put_eu2['dmat'],self.put_eu2['rate'], self.put_eu2['vol'], self.put_eu2['typ'],div=self.put_eu2['div'])
+
+        #US
+        check_call_us1 = BT.pricing(self.call_us1['spot'], self.call_us1['strike'], self.call_us1['dmat'],self.call_us1['rate'], self.call_us1['vol'], self.call_us1['typ'],div=self.call_us1['div'], american=self.call_us1['american'])
+        check_put_us1 = BT.pricing(self.put_us1['spot'], self.put_us1['strike'], self.put_us1['dmat'],self.put_us1['rate'], self.put_us1['vol'], self.put_us1['typ'],div=self.put_us1['div'], american=self.put_us1['american'])
+        check_call_us2 = BT.pricing(self.call_us2['spot'], self.call_us2['strike'], self.call_us2['dmat'],self.call_us2['rate'], self.call_us2['vol'], self.call_us2['typ'],div=self.call_us2['div'], american=self.call_us2['american'])
+        check_put_us2 = BT.pricing(self.put_us2['spot'], self.put_us2['strike'], self.put_us2['dmat'],self.put_us2['rate'], self.put_us2['vol'], self.put_us2['typ'],div=self.put_us2['div'], american=self.put_us2['american'])
+
+        print("Call EU1, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_eu1, correct=self.call_eu1['price']))
+        print("Put EU1, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_eu1,correct=self.put_eu1['price']))
+        print("Call EU2, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_eu2,correct=self.call_eu2['price']))
+        print("Put EU2, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_eu2,correct=self.put_eu2['price']))
+        print("Call US1, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_us1,correct=self.call_us1['price']))
+        print("Put US1, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_us1,correct=self.put_us1['price']))
+        print("Call US2, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_us2,correct=self.call_us2['price']))
+        print("Put US2, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_us2,correct=self.put_us2['price']))
 
     def Black_Scholes(self):
         BS = Black_Scholes()
@@ -338,7 +434,7 @@ class Tester(object):
 
         BT = Binomial_Tree()
         t0 = time.clock()
-        bt_call_price = BT.pricing(self.spot_series, self.strike_series, self.dmat_series, self.rate_series,self.vol_series, self.typ_series, self.div_series, american=self.american_series, time_steps=time_steps)
+        bt_call_price = BT.pricing(self.spot_array, self.strike_array, self.dmat_array, self.rate_array,self.vol_array, self.typ_array, self.div_array, american=self.american_array, time_steps=time_steps)
         t1 = time.clock()
         print("Binomial tree price vectorized array : {price:.3f} in {timing:.2f} ms.".format(price=bt_call_price[0], timing=(t1 - t0) * 1000))
 
@@ -353,6 +449,48 @@ class Tester(object):
             bt_call_price = BT.pricing(self.spot_array[i], self.strike_array[i], self.dmat_array[i], self.rate_array[i], self.vol_array[i], self.typ_array[i], self.div_array[i], american=self.american_array[i], time_steps=time_steps)
         t1 = time.clock()
         print("Binomial tree price looping array : {price:.3f} in {timing:.2f} ms. \n".format(price=bt_call_price, timing=(t1 - t0) * 1000))
+
+        # Greeks
+        t0 = time.clock()
+        bt_greeks = BT.greeks(self.spot_series, self.strike_series, self.dmat_series, self.rate_series,self.vol_series, self.typ_series, self.div_series, american=self.american_series)
+        t1 = time.clock()
+        print("Greeks BT vectorized series : {timing:.2f} ms.".format(timing=(t1 - t0) * 1000))
+        print("delta : {price:.3f}".format(price=float(bt_greeks[0][0])))
+        print("gamma : {price:.3f}".format(price=float(bt_greeks[1][0])))
+        print("theta : {price:.3f}".format(price=float(bt_greeks[2][0])))
+        print("vega : {price:.3f} \n".format(price=float(bt_greeks[3][0])))
+
+        t0 = time.clock()
+        bt_greeks = BT.greeks(self.spot_array, self.strike_array, self.dmat_array, self.rate_array, self.vol_array,self.typ_array, self.div_array, american=self.american_array)
+        t1 = time.clock()
+        print("Greeks BT vectorized array : {timing:.2f} ms.".format(timing=(t1 - t0) * 1000))
+        print("delta : {price:.3f}".format(price=float(bt_greeks[0][0])))
+        print("gamma : {price:.3f}".format(price=float(bt_greeks[1][0])))
+        print("theta : {price:.3f}".format(price=float(bt_greeks[2][0])))
+        print("vega : {price:.3f} \n".format(price=float(bt_greeks[3][0])))
+
+        #IV
+        t0 = time.clock()
+        iv_call = BT.implied_vol(self.spot_series, self.strike_series, self.dmat_series, self.rate_series,self.typ_series, self.price_series, self.div_series, american=self.american_series, time_steps=time_steps)
+        t1 = time.clock()
+        print("iv BT vectorized series : {price:.3f} in {timing:.2f} ms.".format(price=iv_call[0], timing=(t1 - t0) * 1000))
+
+        t0 = time.clock()
+        iv_call = BT.implied_vol(self.spot_array, self.strike_array, self.dmat_array, self.rate_array,self.typ_array, self.price_array, self.div_array, american=self.american_array,time_steps=time_steps)
+        t1 = time.clock()
+        print("iv BT vectorized array : {price:.3f} in {timing:.2f} ms.".format(price=iv_call[0],timing=(t1 - t0) * 1000))
+
+        t0 = time.clock()
+        for i in range(self.VECTOR_SIZES):
+            iv_call = BT.implied_vol(self.spot_series[i], self.strike_series[i], self.dmat_series[i], self.rate_series[i],self.typ_series[i], self.price_series[i], self.div_series[i], american=self.american_series[i],time_steps=time_steps)
+        t1 = time.clock()
+        print("iv BT loop series : {price:.3f} in {timing:.2f} ms.".format(price=iv_call,timing=(t1 - t0) * 1000))
+
+        t0 = time.clock()
+        for i in np.ndindex(self.VECTOR_SIZES):
+            iv_call = BT.implied_vol(self.spot_array[i], self.strike_array[i], self.dmat_array[i],self.rate_array[i], self.typ_array[i], self.price_array[i], self.div_array[i], american=self.american_array[i], time_steps=time_steps)
+        t1 = time.clock()
+        print("iv BT loop arrays : {price:.3f} in {timing:.2f} ms.".format(price=iv_call, timing=(t1 - t0) * 1000))
 
 def payoff(spotMat, strike, typ):
     #Vectorized
@@ -438,13 +576,13 @@ def statistics_backtest(daily_pnls):
             'sharpe': sharpe,
             'sortino': sortino}
 
-
 def main():
 
-    performance_tester = Tester(div=0.00, typ='P', american=False)
-    performance_tester.Black_Scholes()
+    performance_tester = Tester(VECTOR_SIZES=10000)
+    performance_tester.correct_values()
+    #performance_tester.Black_Scholes()
     #performance_tester.Monte_Carlo()
-    performance_tester.Binomial_Tree()
+    #performance_tester.Binomial_Tree()
 
 
 if __name__ == "__main__":
