@@ -6,6 +6,11 @@ from math import pi
 import datetime as dt
 import time
 
+MC_DEFAULT_ITERATIONS = 100000
+MC_DEFAULT_TIME_STEPS = 100
+BT_DEFAULT_TIME_STEPS = 1000
+
+
 class Black_Scholes(object):
 
     def __init__(self, days_in_year=252):
@@ -100,21 +105,87 @@ class Monte_Carlo(object):
     def __init__(self, days_in_year=252):
         self.days_in_year = days_in_year
 
-    def pricing(self, spot, strike, dmat, rate, vol, div=None, iterations=100000, time_steps=100, antithetic_variates=False, moment_matching=False):
+    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, iterations=MC_DEFAULT_ITERATIONS, time_steps=MC_DEFAULT_TIME_STEPS, antithetic_variates=False, moment_matching=False, random_seed=None):
 
-        if div is None:
-            div=0.0
+        if div is None: div=0.0
+
+        if random_seed is None: random_seed=int(time.time())
 
         if isinstance(spot, pd.Series) or isinstance(spot, np.ndarray):
-            df = pd.DataFrame({'spot': spot, 'strike' : strike, 'dmat': dmat, 'rate': rate, 'vol': vol, 'div': div})
-            return df.apply(lambda x: self.__calculate_price(x['spot'], x['strike'], x['dmat'], x['rate'], x['vol'], x['div'], iterations, time_steps, antithetic_variates, moment_matching), axis=1)
+            df = pd.DataFrame({'spot': spot, 'strike' : strike, 'dmat': dmat, 'rate': rate, 'vol': vol, 'typ': typ, 'div': div})
+            return df.apply(lambda x: self.__calculate_price(x['spot'], x['strike'], x['dmat'], x['rate'], x['vol'], x['typ'], x['div'], iterations, time_steps, antithetic_variates, moment_matching, random_seed), axis=1)
         else:
-            return self.__calculate_price(spot, strike, dmat, rate, vol, div, iterations, time_steps, antithetic_variates, moment_matching)
+            return self.__calculate_price(spot, strike, dmat, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
 
-    def __calculate_price(self, spot, strike, dmat, rate, vol, div, iterations, time_steps, antithetic_variates, moment_matching):
+    def greeks(self, spot, strike, dmat, rate, vol, typ, div=None, greek = 'all', iterations=MC_DEFAULT_ITERATIONS, time_steps=MC_DEFAULT_TIME_STEPS, antithetic_variates=False, moment_matching=False, random_seed=None):
+
+        gamma_jump = 0.05 * spot
+        theta_jump = 0.001 * self.days_in_year
+        vega_jump = 0.001
+
+        if random_seed is None: random_seed = int(time.time())
+
+        delta, gamma, theta, vega = None, None, None, None
+        # Delta
+        if greek == 'delta' or greek == 'all':
+            delta = self.__delta(spot, strike, dmat, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+            delta = delta
+            if greek == 'delta':
+                return delta
+
+        #Gamma
+        if greek == 'gamma' or greek == 'all':
+            delta_up = self.__delta(spot + gamma_jump, strike, dmat, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+            delta_down = self.__delta(spot - gamma_jump, strike, dmat, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+            gamma = (delta_up - delta_down) / (2 * gamma_jump)
+            if greek == 'gamma':
+                return gamma
+
+        #Theta (1 day move)
+        if greek == 'theta' or greek == 'all':
+            price_up = self.pricing(spot, strike, dmat - theta_jump, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+            price_down = self.pricing(spot, strike, dmat + theta_jump, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+            theta = (price_up - price_down) / (2 * theta_jump)
+            if greek == 'theta':
+                return theta
+
+        #Vega (1 % move)
+        if greek == 'vega' or greek == 'all':
+            price_up = self.pricing(spot, strike, dmat, rate, vol + vega_jump, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+            price_down = self.pricing(spot, strike, dmat, rate, vol - vega_jump, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+            vega = (1/100) * (price_up - price_down) / (2 * vega_jump)
+            if greek == 'vega':
+                return vega
+
+        return [delta, gamma, theta, vega]
+
+    def implied_vol(self, spot, strike, dmat, rate, typ, price, div=None, iterations=MC_DEFAULT_ITERATIONS, time_steps=MC_DEFAULT_TIME_STEPS, antithetic_variates=False, moment_matching=False, random_seed=None):
+
+        if isinstance(price, pd.Series) or isinstance(price, np.ndarray):
+            df = pd.DataFrame({'spot': spot, 'strike': strike, 'dmat': dmat, 'rate': rate, 'typ': typ, 'price': price, 'div': div})
+            return df.apply(lambda x: self.__calculate_iv(x['spot'], x['strike'], x['dmat'], x['rate'], x['typ'], x['price'], x['div'], iterations, time_steps, antithetic_variates, moment_matching, random_seed), axis=1)
+        else:
+            return self.__calculate_iv(spot, strike, dmat, rate, typ, price, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+
+    def __calculate_iv(self, spot, strike, dmat, rate, typ, price, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed):
+        #return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div, american=american, time_steps=time_steps) - price, x0=np.array(0.2),xtol=0.01 / 100)[0]
+        if random_seed is None: random_seed = int(time.time())
+
+        return newton(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed) - price, x0=0.2,tol=0.01 / 100)
+
+    def __delta(self, spot, strike, dmat, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed):
+        delta_jump = (0.01 / 1000) * spot
+        # Delta
+        price_up = self.pricing(spot + delta_jump, strike, dmat, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+        price_down = self.pricing(spot - delta_jump, strike, dmat, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed)
+        return (price_up - price_down) / (2 * delta_jump)
+
+    def __calculate_price(self, spot, strike, dmat, rate, vol, typ, div, iterations, time_steps, antithetic_variates, moment_matching, random_seed):
 
         # time interval
         interval = (dmat / self.days_in_year) / time_steps
+
+        np.random.seed(random_seed)
 
         S = np.zeros((time_steps + 1, iterations))
         S[0] = spot
@@ -127,7 +198,10 @@ class Monte_Carlo(object):
         call_price = actualization * np.sum(np.maximum(S[-1] - strike, 0)) / iterations
         put_price = actualization * np.sum(np.maximum(strike - S[-1], 0)) / iterations
 
-        return [float(call_price), float(put_price)]
+        if typ == 'C':
+            return call_price
+        else:
+            return put_price
 
     @staticmethod
     def __gauss_generator(d1, antithetic_variates, moment_matching):
@@ -146,7 +220,7 @@ class Binomial_Tree(object):
     def __init__(self, days_in_year=252):
         self.days_in_year = days_in_year
 
-    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, american=None, time_steps=2000):
+    def pricing(self, spot, strike, dmat, rate, vol, typ, div=None, american=None, time_steps=BT_DEFAULT_TIME_STEPS):
         #Vectorized
 
         if div is None:
@@ -192,7 +266,7 @@ class Binomial_Tree(object):
 
         return vector_prices[0]
 
-    def greeks(self, spot, strike, dmat, rate, vol, typ, div=None, greek = 'all', american=None, time_steps=2000):
+    def greeks(self, spot, strike, dmat, rate, vol, typ, div=None, greek = 'all', american=None, time_steps=BT_DEFAULT_TIME_STEPS):
 
         gamma_jump = 0.05 * spot
         theta_jump = 0.001 * self.days_in_year
@@ -231,7 +305,7 @@ class Binomial_Tree(object):
 
         return [delta, gamma, theta, vega]
 
-    def implied_vol(self, spot, strike, dmat, rate, typ, price, div=None, american=None, time_steps=2000):
+    def implied_vol(self, spot, strike, dmat, rate, typ, price, div=None, american=None, time_steps=BT_DEFAULT_TIME_STEPS):
 
         if isinstance(price, pd.Series) or isinstance(price, np.ndarray):
             df = pd.DataFrame({'spot': spot, 'strike': strike, 'dmat': dmat, 'rate': rate, 'typ': typ, 'price': price, 'div': div, 'american': american})
@@ -249,7 +323,6 @@ class Binomial_Tree(object):
         price_up = self.pricing(spot + delta_jump, strike, dmat, rate, vol, typ, div=div, american=american,time_steps=time_steps)
         price_down = self.pricing(spot - delta_jump, strike, dmat, rate, vol, typ, div=div, american=american,time_steps=time_steps)
         return (price_up - price_down) / (2 * delta_jump)
-
 
 class Tester(object):
 
@@ -286,28 +359,41 @@ class Tester(object):
 
     def correct_values(self):
         BT = Binomial_Tree()
+        MC = Monte_Carlo()
         BS = Black_Scholes()
 
-        #EU
+        #EU BS
         check_call_eu1 = BS.pricing(self.call_eu1['spot'],self.call_eu1['strike'], self.call_eu1['dmat'], self.call_eu1['rate'], self.call_eu1['vol'], self.call_eu1['typ'], div=self.call_eu1['div'])
         check_put_eu1 = BS.pricing(self.put_eu1['spot'], self.put_eu1['strike'], self.put_eu1['dmat'],self.put_eu1['rate'], self.put_eu1['vol'], self.put_eu1['typ'],div=self.put_eu1['div'])
         check_call_eu2 = BS.pricing(self.call_eu2['spot'], self.call_eu2['strike'], self.call_eu2['dmat'],self.call_eu2['rate'], self.call_eu2['vol'], self.call_eu2['typ'],div=self.call_eu2['div'])
         check_put_eu2 = BS.pricing(self.put_eu2['spot'], self.put_eu2['strike'], self.put_eu2['dmat'],self.put_eu2['rate'], self.put_eu2['vol'], self.put_eu2['typ'],div=self.put_eu2['div'])
 
-        #US
-        check_call_us1 = BT.pricing(self.call_us1['spot'], self.call_us1['strike'], self.call_us1['dmat'],self.call_us1['rate'], self.call_us1['vol'], self.call_us1['typ'],div=self.call_us1['div'], american=self.call_us1['american'])
-        check_put_us1 = BT.pricing(self.put_us1['spot'], self.put_us1['strike'], self.put_us1['dmat'],self.put_us1['rate'], self.put_us1['vol'], self.put_us1['typ'],div=self.put_us1['div'], american=self.put_us1['american'])
-        check_call_us2 = BT.pricing(self.call_us2['spot'], self.call_us2['strike'], self.call_us2['dmat'],self.call_us2['rate'], self.call_us2['vol'], self.call_us2['typ'],div=self.call_us2['div'], american=self.call_us2['american'])
-        check_put_us2 = BT.pricing(self.put_us2['spot'], self.put_us2['strike'], self.put_us2['dmat'],self.put_us2['rate'], self.put_us2['vol'], self.put_us2['typ'],div=self.put_us2['div'], american=self.put_us2['american'])
+        #EU MC
+        check_call_eu1_mc = MC.pricing(self.call_eu1['spot'], self.call_eu1['strike'], self.call_eu1['dmat'],self.call_eu1['rate'], self.call_eu1['vol'], self.call_eu1['typ'], div=self.call_eu1['div'], iterations=100000, time_steps=1000)
+        check_put_eu1_mc = MC.pricing(self.put_eu1['spot'], self.put_eu1['strike'], self.put_eu1['dmat'],self.put_eu1['rate'], self.put_eu1['vol'], self.put_eu1['typ'],div=self.put_eu1['div'], iterations=100000, time_steps=1000)
+        check_call_eu2_mc = MC.pricing(self.call_eu2['spot'], self.call_eu2['strike'], self.call_eu2['dmat'],self.call_eu2['rate'], self.call_eu2['vol'], self.call_eu2['typ'], div=self.call_eu2['div'],iterations=100000, time_steps=1000)
+        check_put_eu2_mc = MC.pricing(self.put_eu2['spot'], self.put_eu2['strike'], self.put_eu2['dmat'],self.put_eu2['rate'], self.put_eu2['vol'], self.put_eu2['typ'],div=self.put_eu2['div'],iterations=100000, time_steps=1000)
 
-        print("Call EU1, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_eu1, correct=self.call_eu1['price']))
-        print("Put EU1, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_eu1,correct=self.put_eu1['price']))
-        print("Call EU2, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_eu2,correct=self.call_eu2['price']))
-        print("Put EU2, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_eu2,correct=self.put_eu2['price']))
+        #US
+        check_call_us1 = BT.pricing(self.call_us1['spot'], self.call_us1['strike'], self.call_us1['dmat'],self.call_us1['rate'], self.call_us1['vol'], self.call_us1['typ'],div=self.call_us1['div'], american=self.call_us1['american'], time_steps=10000)
+        check_put_us1 = BT.pricing(self.put_us1['spot'], self.put_us1['strike'], self.put_us1['dmat'],self.put_us1['rate'], self.put_us1['vol'], self.put_us1['typ'],div=self.put_us1['div'], american=self.put_us1['american'], time_steps=10000)
+        check_call_us2 = BT.pricing(self.call_us2['spot'], self.call_us2['strike'], self.call_us2['dmat'],self.call_us2['rate'], self.call_us2['vol'], self.call_us2['typ'],div=self.call_us2['div'], american=self.call_us2['american'], time_steps=10000)
+        check_put_us2 = BT.pricing(self.put_us2['spot'], self.put_us2['strike'], self.put_us2['dmat'],self.put_us2['rate'], self.put_us2['vol'], self.put_us2['typ'],div=self.put_us2['div'], american=self.put_us2['american'], time_steps=10000)
+
+        print("Call EU1 BS, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_eu1, correct=self.call_eu1['price']))
+        print("Put EU1 BS, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_eu1, correct=self.put_eu1['price']))
+        print("Call EU2 BS, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_eu2, correct=self.call_eu2['price']))
+        print("Put EU2 BS, model : {model:.3f}, estimation : {correct:.3f} \n".format(model=check_put_eu2, correct=self.put_eu2['price']))
+
+        print("Call EU1 MC, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_eu1_mc, correct=self.call_eu1['price']))
+        print("Put EU1 MC, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_eu1_mc, correct=self.put_eu1['price']))
+        print("Call EU2 MC, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_eu2_mc, correct=self.call_eu2['price']))
+        print("Put EU2 MC, model : {model:.3f}, estimation : {correct:.3f} \n".format(model=check_put_eu2_mc, correct=self.put_eu2['price']))
+
         print("Call US1, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_us1,correct=self.call_us1['price']))
         print("Put US1, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_us1,correct=self.put_us1['price']))
         print("Call US2, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_call_us2,correct=self.call_us2['price']))
-        print("Put US2, model : {model:.3f}, estimation : {correct:.3f}".format(model=check_put_us2,correct=self.put_us2['price']))
+        print("Put US2, model : {model:.3f}, estimation : {correct:.3f} \n".format(model=check_put_us2,correct=self.put_us2['price']))
 
     def Black_Scholes(self):
         BS = Black_Scholes()
@@ -402,29 +488,62 @@ class Tester(object):
     def Monte_Carlo(self):
         MC = Monte_Carlo()
 
-        t0 = time.clock()
-        mc_price = MC.pricing(self.spot_series, self.strike_series, self.dmat_series, self.rate_series, self.vol_series, self.div_series, antithetic_variates=True, moment_matching=True)
-        t1 = time.clock()
-        print("MC price vectorized series : {price:.3f} in {timing:.2f} ms.".format(price=mc_price[0][0],timing=(t1 - t0) * 1000))
+        random_seed = int(time.time())
 
         t0 = time.clock()
-        mc_price = MC.pricing(self.spot_array, self.strike_array, self.dmat_array, self.rate_array, self.vol_array, self.div_array, antithetic_variates=True, moment_matching=True)
+        mc_price = MC.pricing(self.spot_series, self.strike_series, self.dmat_series, self.rate_series, self.vol_series, self.typ_series, self.div_series,random_seed=random_seed, antithetic_variates=True, moment_matching=True)
         t1 = time.clock()
-        print("MC price vectorized array : {price:.3f} in {timing:.2f} ms.".format(price=mc_price[0][0],timing=(t1 - t0) * 1000))
+        print("MC price vectorized series : {price:.3f} in {timing:.2f} ms.".format(price=mc_price[0],timing=(t1 - t0) * 1000))
+
+        t0 = time.clock()
+        mc_price = MC.pricing(self.spot_array, self.strike_array, self.dmat_array, self.rate_array, self.vol_array, self.typ_array, self.div_array, random_seed=random_seed, antithetic_variates=True, moment_matching=True)
+        t1 = time.clock()
+        print("MC price vectorized array : {price:.3f} in {timing:.2f} ms.".format(price=mc_price[0],timing=(t1 - t0) * 1000))
 
         t0 = time.clock()
         for i in range(self.VECTOR_SIZES):
-            mc_price = MC.pricing(self.spot_series[i], self.strike_series[i], self.dmat_series[i], self.rate_series[i], self.vol_series[i], self.div_series[i], antithetic_variates=True, moment_matching=True)
+            mc_price = MC.pricing(self.spot_series[i], self.strike_series[i], self.dmat_series[i], self.rate_series[i], self.vol_series[i], self.typ_series[i], self.div_series[i], random_seed=random_seed, antithetic_variates=True, moment_matching=True)
         t1 = time.clock()
-        print("MC price looping series : {price:.3f} in {timing:.2f} ms.".format(price=mc_price[0], timing=(t1 - t0) * 1000))
+        print("MC price looping series : {price:.3f} in {timing:.2f} ms.".format(price=mc_price, timing=(t1 - t0) * 1000))
 
         t0 = time.clock()
         for i in np.ndindex(self.VECTOR_SIZES):
-            mc_price = MC.pricing(self.spot_array[i], self.strike_array[i], self.dmat_array[i], self.rate_array[i], self.vol_array[i], self.div_array[i], antithetic_variates=True,moment_matching=True)
+            mc_price = MC.pricing(self.spot_array[i], self.strike_array[i], self.dmat_array[i], self.rate_array[i], self.vol_array[i], self.typ_array[i], self.div_array[i], random_seed=random_seed, antithetic_variates=True, moment_matching=True)
         t1 = time.clock()
-        print("MC price looping array : {price:.3f} in {timing:.2f} ms. \n".format(price=mc_price[0], timing=(t1 - t0) * 1000))
+        print("MC price looping array : {price:.3f} in {timing:.2f} ms. \n".format(price=mc_price, timing=(t1 - t0) * 1000))
 
-    def Binomial_Tree(self, time_steps=2000):
+        # Greeks
+        t0 = time.clock()
+        mc_greeks = MC.greeks(self.spot_series, self.strike_series, self.dmat_series, self.rate_series, self.vol_series, self.typ_series, div=self.div_series, greek = 'all', random_seed=random_seed, antithetic_variates=True, moment_matching=True)
+        t1 = time.clock()
+        print("Greeks MC vectorized series : {timing:.2f} ms.".format(timing=(t1 - t0) * 1000))
+        print("delta : {price:.3f}".format(price=mc_greeks[0][0]))
+        print("gamma : {price:.3f}".format(price=mc_greeks[1][0]))
+        print("theta : {price:.3f}".format(price=mc_greeks[2][0]))
+        print("vega : {price:.3f}".format(price=mc_greeks[3][0]))
+
+        # Greeks
+        t0 = time.clock()
+        mc_greeks = MC.greeks(self.spot_array, self.strike_array, self.dmat_array, self.rate_array, self.vol_array,self.typ_array, div=self.div_array, greek='all', random_seed=random_seed, antithetic_variates=True, moment_matching=True)
+        t1 = time.clock()
+        print("Greeks MC vectorized array : {timing:.2f} ms.".format(timing=(t1 - t0) * 1000))
+        print("delta : {price:.3f}".format(price=mc_greeks[0][0]))
+        print("gamma : {price:.3f}".format(price=mc_greeks[1][0]))
+        print("theta : {price:.3f}".format(price=mc_greeks[2][0]))
+        print("vega : {price:.3f} \n".format(price=mc_greeks[3][0]))
+
+        # IV
+        t0 = time.clock()
+        iv_mc = MC.implied_vol(self.spot_series, self.strike_series, self.dmat_series, self.rate_series,self.typ_series, self.price_series, self.div_series, random_seed=random_seed, antithetic_variates=True, moment_matching=True)
+        t1 = time.clock()
+        print("iv MC vectorized series : {price:.3f} in {timing:.2f} ms.".format(price=iv_mc[0],timing=(t1 - t0) * 1000))
+
+        t0 = time.clock()
+        iv_mc = MC.implied_vol(self.spot_array, self.strike_array, self.dmat_array, self.rate_array,self.typ_array, self.price_array, self.div_array, random_seed=random_seed, antithetic_variates=True, moment_matching=True)
+        t1 = time.clock()
+        print("iv MC vectorized array : {price:.3f} in {timing:.2f} ms.".format(price=iv_mc[0], timing=(t1 - t0) * 1000))
+
+    def Binomial_Tree(self, time_steps=BT_DEFAULT_TIME_STEPS):
 
         BT = Binomial_Tree()
         t0 = time.clock()
@@ -578,7 +697,7 @@ def statistics_backtest(daily_pnls):
 
 def main():
 
-    performance_tester = Tester(VECTOR_SIZES=10000)
+    performance_tester = Tester(VECTOR_SIZES=10)
     performance_tester.correct_values()
     #performance_tester.Black_Scholes()
     #performance_tester.Monte_Carlo()
