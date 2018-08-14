@@ -63,13 +63,13 @@ class Black_Scholes(object):
             # for a 1 move of underlying
             delta = np.where(typ == "C", nd1 * div_term, div_term * (nd1 - 1))
             if greek == 'delta':
-                return delta
+                return float(delta)
 
         if greek == 'gamma' or greek =='all':
             # for a 1 move amplitude of underlying
-            gamma = n_dash_d1 / (spot * vol * np.sqrt(dmat / self.days_in_year))
+            gamma = np.array(n_dash_d1 / (spot * vol * np.sqrt(dmat / self.days_in_year)))
             if greek =='gamma':
-                return gamma
+                return float(gamma)
 
         if greek == 'theta' or greek == 'all':
             # for 1 business day
@@ -77,15 +77,18 @@ class Black_Scholes(object):
                             (1 / self.days_in_year) * (-(spot * n_dash_d1 * vol) / (2 * np.sqrt(dmat / self.days_in_year)) - (rate * strike * np.exp(-rate * (dmat / self.days_in_year)) * nd2) + div * spot * div_term * nd1),
                             (1 / self.days_in_year) * (-(spot * n_dash_d1 * vol) / (2 * np.sqrt(dmat / self.days_in_year)) + (rate * strike * np.exp(-rate * (dmat / self.days_in_year)) * nd2n) - div * spot * div_term * nd1n))
             if greek == 'theta':
-                return theta
+                return float(theta)
 
         if greek == 'vega' or greek == 'all':
             # for a 1% move of iv
-            vega = spot * np.sqrt(dmat / self.days_in_year) * n_dash_d1 / 100
+            vega = np.array(spot * np.sqrt(dmat / self.days_in_year) * n_dash_d1 / 100)
             if greek == 'vega':
-                return vega
+                return float(vega)
 
-        return [delta, gamma, theta, vega]
+        if delta.size == 1:
+            return [float(delta), float(gamma), float(theta), float(vega)]
+        else:
+            return [delta, gamma, theta, vega]
 
     def implied_vol(self, spot, strike, dmat, rate, typ, price, div=None):
         #Vectorized
@@ -315,7 +318,7 @@ class Binomial_Tree(object):
 
     def __calculate_iv(self, spot, strike, dmat, rate, typ, price, div, american, time_steps):
         #return fsolve(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div, american=american, time_steps=time_steps) - price, x0=np.array(0.2),xtol=0.01 / 100)[0]
-        return newton(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div) - price, x0=0.2,tol=0.01 / 100)
+        return newton(func=lambda x: self.pricing(spot, strike, dmat, rate, x, typ, div, american) - price, x0=0.2,tol=0.01 / 100)
 
     def __delta(self, spot, strike, dmat, rate, vol, typ, div, american, time_steps):
         delta_jump = (0.01 / 1000) * spot
@@ -698,9 +701,9 @@ def statistics_backtest(daily_pnls):
 def main():
 
     performance_tester = Tester(VECTOR_SIZES=10)
-    performance_tester.correct_values()
+    #performance_tester.correct_values()
     #performance_tester.Black_Scholes()
-    #performance_tester.Monte_Carlo()
+    performance_tester.Monte_Carlo()
     #performance_tester.Binomial_Tree()
 
 
