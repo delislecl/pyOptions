@@ -7,6 +7,7 @@ setup(
     url='https://github.com/delislecl/pyOptions',
     license='MIT',
     author='Clement',
+    requires= ['numpy', 'pandas', 'scipy'],
     author_email='delisle.cl@gmail.com',
     description='Options pricing package'
 )
