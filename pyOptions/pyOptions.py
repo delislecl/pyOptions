@@ -701,9 +701,9 @@ def statistics_backtest(daily_pnls):
 def main():
 
     performance_tester = Tester(VECTOR_SIZES=10)
-    #performance_tester.correct_values()
+    performance_tester.correct_values()
     #performance_tester.Black_Scholes()
-    performance_tester.Monte_Carlo()
+    #performance_tester.Monte_Carlo()
     #performance_tester.Binomial_Tree()
 
 
