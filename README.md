@@ -107,13 +107,47 @@ More examples with measured processsing times [here](examples/examples.ipynb).
 
 Some other functions that can be usefull for options manipulations :
 
-- days_to_maturity(endDate) will return the exact number of opening days of the NYSE remaining between now and endDate
+- days_to_maturity(endDate, hours_in_day=6.5, hour_close=16, minute_close=0) : will return the exact number of opening days of the NYSE remaining between now and endDate
 (using calendar from [NYSE](https://www.nyse.com/markets/hours-calendars)) as a float (including current time).
 Usefull for calculating options remaining days to expiration. For example :
 
 ```
+expiration = dt.datetime.strptime('8/15/2020', '%m/%d/%Y')
+
+days_remaining = pyOptions.days_to_maturity(expiration)
+```
+This will returns 505.50 days (ran 8/15/2018).
+It can also be ran on vectors.
+
+- payoff(spotMat, strike, typ) : simply return the payoff of an option.
+
+- random_walk_generator(mu=0.05, sigma=0.2, S0=100, T=1) : simulate a stock path using a random walk with drift and volatility.
+
+- statistics_backtest(daily_pnls) : generates statistics on a backtest result such as max_drawdown, sharp, sortino... It can be usefull for quickly analyzing a strategy attractiveness.
+For example :
 
 ```
+stock_simulated = pyOptions.random_walk_generator(mu=0.10, sigma=0.05, S0=100, T=2)
+
+daily_pnl_simulated = 100000 * stock_simulated.pct_change().dropna()
+
+stats = pyOptions.statistics_backtest(daily_pnl_simulated)
+```
+This will return :
+```
+{'avg_pnl': 33.474944500508855,
+ 'max_drawdown': -5407.4252657000725,
+ 'max_drawdown_begin': 221,
+ 'max_drawdown_end': 301,
+ 'max_pnl': 1031.0854184457207,
+ 'mdn_pnl': 29.515536772661832,
+ 'min_pnl': -761.08109214232388,
+ 'proba_up': 0.5427435387673957,
+ 'sharpe': 1.683991016930604,
+ 'sortino': 3.0739093013735892,
+ 'std_pnl': 315.55885064564615,
+ 'total_pnl': 16837.897083755954}
+ ```
 
 
 
