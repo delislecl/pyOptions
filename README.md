@@ -53,6 +53,7 @@ For european options using Monte Carlo simulations  :
 
 ```
 MC = pyOptions.Monte_Carlo()
+
 ITERATIONS = 100000
 TIME_STEPS = 100
 
