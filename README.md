@@ -46,7 +46,7 @@ opt_price = BT.pricing(S, K, T, r, sigma, typ, div, american=True, time_steps=10
 
 iv = BT.implied_vol(S, K, T, r, typ, opt_price, div, american=True, time_steps=1000)
 
-delta, gamma, theta, vega = BT.greeks(S, K, T, r, sigma, typ, div, american=True)
+delta, gamma, theta, vega = BT.greeks(S, K, T, r, sigma, typ, div, american=True, time_steps=1000)
 ```
 
 For european options using Monte Carlo simulations  :
