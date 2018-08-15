@@ -650,7 +650,11 @@ def days_to_maturity(endDate, hours_in_day=6.5, hour_close=16, minute_close=0):
 
     # NbSeconds
     end_of_day = dt.datetime(startDatetime.year, startDatetime.month, startDatetime.day, hour_close, minute_close, 0)
-    NbSeconds = np.maximum(np.minimum((end_of_day - startDatetime).seconds / (seconds_in_hour * hours_in_day), hours_in_day), 0)
+    if end_of_day > startDatetime:
+        seconds_remaining = (end_of_day - startDatetime).seconds
+    else:
+        seconds_remaining = -(startDatetime - end_of_day).seconds
+    NbSeconds = np.maximum(np.minimum(seconds_remaining / (seconds_in_hour * hours_in_day), hours_in_day), 0)
 
     test = NbDays.size
     if NbDays.size == 1:
@@ -700,11 +704,17 @@ def statistics_backtest(daily_pnls):
 
 def main():
 
-    performance_tester = Tester(VECTOR_SIZES=10)
-    performance_tester.correct_values()
+    #performance_tester = Tester(VECTOR_SIZES=10)
+    #performance_tester.correct_values()
     #performance_tester.Black_Scholes()
     #performance_tester.Monte_Carlo()
     #performance_tester.Binomial_Tree()
+
+    expiration = dt.datetime.strptime('8/15/2020', '%m/%d/%Y')
+
+    days = days_to_maturity(expiration)
+    test = 0
+
 
 
 if __name__ == "__main__":
