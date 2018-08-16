@@ -22,6 +22,8 @@ pip install git+https://github.com/delislecl/pyOptions.git
 We can define options parameters as follow :
 
 ```
+import pyOptions
+
 S, K, T, sigma, r, typ, div = 200, 220, 2*252, 0.25, 0.05, 'C', 0.03
 ```
 
@@ -90,7 +92,7 @@ typ_array = np.array([typ for i in range(VECT_LENGTH)])
 div_array = np.array([div for i in range(VECT_LENGTH)])
 ```
 
-We can apply Black Scholes to get results as a vector :
+We can directly use functions on vectors to get results as vectors :
 
 ```
 BS = pyOptions.Black_Scholes()
@@ -117,7 +119,7 @@ expiration = dt.datetime.strptime('8/15/2020', '%m/%d/%Y')
 
 days_remaining = pyOptions.days_to_maturity(expiration)
 ```
-This will returns 505.50 days (ran 8/15/2018).
+This will returns 504.49 days (ran 8/16/2018 at 12:50PM, 504 days + around half a day remaining at this time).
 It can also be ran on vectors.
 
 - payoff(spotMat, strike, typ) : simply return the payoff of an option.
